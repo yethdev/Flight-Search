@@ -9,10 +9,11 @@ Flight Search is a kid-friendly fork of SearXNG, built with safety as the top pr
 - A kid-safe AI
 - An easy-to-switch-to interface
 - Most importantly, 100% kid-safe search results
+- Risk scoring 0-100
 
 ## How It Works
 
-Flight Search uses a long list of words that are not allowed in searches.
+Flight Search uses a dynamic blocklists that are not allowed in searches.
 
 If any of those words are found:
 

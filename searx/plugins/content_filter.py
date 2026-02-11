@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Content filter plugin — blocks searches for dangerous, illegal, or
-age-inappropriate content and shows a kid-friendly warning with
-relevant helpline numbers when applicable."""
+"""Content filter - risk-scored, context-aware blocking with dynamic
+domain blocklists and per-category guidance for a kid-safe search engine."""
 
 import logging
 import re
+import threading
 import typing as t
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 import flask
 from searx.plugins import Plugin, PluginInfo
@@ -27,12 +29,13 @@ _CATEGORIES: dict[str, dict] = {
             "ak-47", "ak47", "assault rifle", "assault weapon",
             "sniper rifle", "machine gun", "submachine gun", "uzi",
             "glock", "buy gun", "buy guns", "gun shop", "gun store",
-            "gun broker", "gunbroker", "gunshop", "gunsho",
+            "gun broker", "gunbroker", "gunshop",
             "weapon", "weapons", "semi-automatic", "semiautomatic",
             "concealed carry", "gun dealer", "gun sale",
             "silencer", "suppressor", "bump stock",
         ],
-        "message": "This search has been blocked because it may contain content that isn't appropriate for young users.",
+        "risk": 70, "reducible": True, "label": "weapons",
+        "message": "This search was blocked because it relates to: weapons.",
     },
     "explosives": {
         "terms": [
@@ -42,7 +45,8 @@ _CATEGORIES: dict[str, dict] = {
             "how to make explosives", "improvised explosive",
             "ied", "incendiary",
         ],
-        "message": "This search has been blocked because it involves dangerous content.",
+        "risk": 85, "reducible": True, "label": "explosives",
+        "message": "This search was blocked because it relates to: dangerous materials.",
     },
     "drugs": {
         "terms": [
@@ -62,7 +66,8 @@ _CATEGORIES: dict[str, dict] = {
             "bath salts", "spice drug", "synthetic cannabinoid",
             "amphetamine", "barbiturate", "benzodiazepine",
         ],
-        "message": "This search has been blocked because it involves drugs or controlled substances.",
+        "risk": 60, "reducible": True, "label": "drugs",
+        "message": "This search was blocked because it relates to: drugs or controlled substances.",
         "hotline": "If you or someone you know is struggling with substance use, contact the SAMHSA National Helpline: 1-800-662-4357 (free, confidential, 24/7).",
     },
     "self_harm": {
@@ -80,6 +85,7 @@ _CATEGORIES: dict[str, dict] = {
             "pro ana", "pro mia", "thinspo", "thinspiration",
             "eating disorder tips",
         ],
+        "risk": 95, "reducible": False, "label": "self-harm",
         "message": "It looks like you or someone you know might be going through a tough time. You are not alone, and there are people who care and want to help.",
         "hotline": "988 Suicide & Crisis Lifeline: Call or text 988 (available 24/7). Crisis Text Line: Text HOME to 741741.",
     },
@@ -99,7 +105,8 @@ _CATEGORIES: dict[str, dict] = {
             "nude pics", "leaked nudes",
             "sexting", "sext",
         ],
-        "message": "This search has been blocked because it may contain adult content that isn't appropriate for young users.",
+        "risk": 90, "reducible": False, "label": "adult content",
+        "message": "This search was blocked because it relates to: adult content.",
     },
     "violence_gore": {
         "terms": [
@@ -112,7 +119,8 @@ _CATEGORIES: dict[str, dict] = {
             "how to strangle", "hit man", "hitman for hire",
             "hire assassin", "serial killer methods",
         ],
-        "message": "This search has been blocked because it involves violent or disturbing content.",
+        "risk": 80, "reducible": True, "label": "violence",
+        "message": "This search was blocked because it relates to: violence.",
     },
     "gambling": {
         "terms": [
@@ -122,7 +130,8 @@ _CATEGORIES: dict[str, dict] = {
             "online slots", "roulette online", "blackjack online",
             "csgo gambling", "skin gambling", "crypto casino",
         ],
-        "message": "This search has been blocked because it involves gambling content that isn't appropriate for young users.",
+        "risk": 50, "reducible": True, "label": "gambling",
+        "message": "This search was blocked because it relates to: gambling.",
     },
     "illegal_activities": {
         "terms": [
@@ -137,7 +146,8 @@ _CATEGORIES: dict[str, dict] = {
             "darknet", "how to access dark web",
             "swatting", "how to swat",
         ],
-        "message": "This search has been blocked because it involves potentially illegal activities.",
+        "risk": 75, "reducible": False, "label": "illegal activity",
+        "message": "This search was blocked because it relates to: illegal activities.",
     },
     "hate_speech": {
         "terms": [
@@ -145,7 +155,8 @@ _CATEGORIES: dict[str, dict] = {
             "nazi propaganda", "kkk", "ku klux klan",
             "racial slur", "hate group",
         ],
-        "message": "This search has been blocked because it may involve hateful content.",
+        "risk": 70, "reducible": True, "label": "hate speech",
+        "message": "This search was blocked because it relates to: hateful content.",
     },
     "tobacco_alcohol": {
         "terms": [
@@ -153,16 +164,15 @@ _CATEGORIES: dict[str, dict] = {
             "buy beer online", "buy liquor online", "buy vape",
             "juul pods", "vape juice",
         ],
-        "message": "This search has been blocked because it involves products that aren't appropriate for young users.",
+        "risk": 40, "reducible": True, "label": "tobacco or alcohol",
+        "message": "This search was blocked because it relates to: age-restricted products.",
     },
     "proxies": {
         "terms": [
-            # Specific proxy / unblocker tool names
             "croxyproxy", "croxy proxy", "croxy",
             "anuraos", "anura os", "anura proxy",
             "petezah", "petezah proxy",
             "frogies arcade", "frogies",
-            # Proxy-seeking phrases (won't match "proxy war", "proxy vote", etc.)
             "web proxy", "free proxy", "proxy site", "proxy sites",
             "proxy browser", "proxy server free", "proxy unblock",
             "unblock proxy", "unblock sites", "unblock websites",
@@ -173,48 +183,216 @@ _CATEGORIES: dict[str, dict] = {
             "proxy list", "proxy download",
             "quasar proxy", "quasar browser", "quasar unblocker",
         ],
-        # Also match common misspellings / leet-speak of "proxy" as standalone
         "patterns": [
-            r"(?:^|\s)pr[0]xy(?:\s|$)",                  # pr0xy (leet-speak)
-            r"(?:^|\s)prox[iIeE]e?(?:\s|$)",             # proxie, proxi
-            r"(?:^|\s)prx?oy(?:\s|$)",                    # prxoy, proy
-            r"(?:^|\s)porxy(?:\s|$)",                      # porxy
-            r"^proxy$",                                    # exact standalone "proxy"
+            r"(?:^|\s)pr[0]xy(?:\s|$)",
+            r"(?:^|\s)prox[iIeE]e?(?:\s|$)",
+            r"(?:^|\s)prx?oy(?:\s|$)",
+            r"(?:^|\s)porxy(?:\s|$)",
+            r"^proxy$",
         ],
-        "message": "This search has been blocked because it involves proxy or filter circumvention tools that aren't allowed.",
+        "risk": 65, "reducible": False, "label": "filter circumvention",
+        "message": "This search was blocked because it relates to: proxy or filter circumvention tools.",
+    },
+    "domestic_violence": {
+        "terms": [
+            "domestic violence", "domestic abuse",
+            "abusive relationship", "abusive partner",
+            "my partner hits me", "my husband hits me", "my wife hits me",
+            "my boyfriend hits me", "my girlfriend hits me",
+            "abuse at home", "being abused at home",
+            "he hits me", "she hits me",
+            "scared of my partner", "controlling relationship",
+            "intimate partner violence",
+        ],
+        "risk": 90, "reducible": True, "label": "domestic violence",
+        "message": "If you or someone you know is in a dangerous situation, help is available right now.",
+        "hotline": "National Domestic Violence Hotline: 1-800-799-7233 (24/7, free, confidential). If you are in immediate danger, call 911.",
+    },
+    "sexual_assault": {
+        "terms": [
+            "sexual assault", "sexually assaulted",
+            "rape", "raped", "molested", "molestation",
+            "touched inappropriately", "someone touched me",
+            "sexual abuse", "sexually abused",
+            "groped", "groping",
+            "date rape", "statutory rape",
+        ],
+        "risk": 95, "reducible": False, "label": "sexual assault",
+        "message": "If you or someone you know has been affected, confidential help is available.",
+        "hotline": "RAINN National Sexual Assault Hotline: 1-800-656-4673 (24/7, free, confidential). If you are in immediate danger, call 911.",
+    },
+    "child_abuse": {
+        "terms": [
+            "child abuse", "child molest", "child molestation",
+            "my parents hurt me", "my dad hits me", "my mom hits me",
+            "being abused", "someone is hurting me",
+            "adults touching kids", "inappropriate touching",
+            "child trafficking", "child exploitation",
+            "child pornography", "csam",
+        ],
+        "risk": 100, "reducible": False, "label": "child safety",
+        "message": "If you or someone you know is being hurt, please reach out for help right now.",
+        "hotline": "Childhelp National Child Abuse Hotline: 1-800-422-4453 (24/7). If you are in immediate danger, call 911.",
+    },
+    "emergency": {
+        "terms": [
+            "i need help now", "someone is trying to hurt me",
+            "i'm in danger", "im in danger",
+            "call the police for me", "i need the police",
+            "emergency help", "please help me",
+            "i don't feel safe", "i dont feel safe",
+            "someone is following me",
+        ],
+        "risk": 100, "reducible": False, "label": "emergency",
+        "message": "If you are in danger or need emergency help:",
+        "hotline": "Call 911 (or your local emergency number) immediately. 988 Suicide & Crisis Lifeline: Call or text 988. Crisis Text Line: Text HOME to 741741.",
     },
 }
 
-_BLOCK_RULES: list[tuple[re.Pattern, str, str]] = []
+_EDUCATIONAL_PREFIXES: list[re.Pattern] = [
+    re.compile(r"^(?:history|origins?|evolution|timeline)\s+(?:of|behind)\b", re.I),
+    re.compile(r"^what\s+(?:is|are|was|were)\b", re.I),
+    re.compile(r"^(?:effects?|impact|consequences?|dangers?)\s+of\b", re.I),
+    re.compile(r"^(?:science|chemistry|physics|biology)\s+(?:of|behind)\b", re.I),
+    re.compile(r"^how\s+does?\s+\w+\s+work\b", re.I),
+    re.compile(r"^why\s+(?:is|are|do|does|did|was|were)\b", re.I),
+    re.compile(r"\b(?:for\s+kids|for\s+students|for\s+school|homework|essay|report|project)\b", re.I),
+    re.compile(r"\b(?:definition|meaning|explained|overview|summary)\b", re.I),
+]
+
+_EDUCATIONAL_SCORE_REDUCTION = 30
+_NEVER_REDUCE = frozenset({
+    "self_harm", "adult_content", "sexual_assault", "child_abuse",
+    "proxies", "illegal_activities", "emergency",
+})
+
+
+def _has_educational_context(query: str) -> bool:
+    for pat in _EDUCATIONAL_PREFIXES:
+        if pat.search(query):
+            return True
+    return False
+
+
+_BLOCK_RULES: list[tuple[re.Pattern, int, str, str, str, str]] = []
 
 
 def _compile_rules():
     for cat, entry in _CATEGORIES.items():
+        risk = entry["risk"]
+        label = entry["label"]
         message = entry["message"]
         hotline = entry.get("hotline", "")
         for term in entry["terms"]:
-            # Escape regex chars, match as whole word (word-boundary)
             escaped = re.escape(term)
-            pattern = re.compile(
-                r"(?:^|[\s\-_/,;.!?\"'])"
-                + escaped
-                + r"(?:[\s\-_/,;.!?\"']|$|s|es|ing|ed)",
+            pat = re.compile(
+                r"(?:^|[\s\-_/,;.!?\"'])" + escaped + r"(?:[\s\-_/,;.!?\"']|$|s|es|ing|ed)",
                 re.IGNORECASE,
             )
-            _BLOCK_RULES.append((pattern, message, hotline))
-        # Extra raw regex patterns (for fuzzy / leet-speak matching)
-        for raw_pat in data.get("patterns", []):
-            pattern = re.compile(raw_pat, re.IGNORECASE)
-            _BLOCK_RULES.append((pattern, message, hotline))
+            _BLOCK_RULES.append((pat, risk, label, message, hotline, cat))
+        for raw_pat in entry.get("patterns", []):
+            pat = re.compile(raw_pat, re.IGNORECASE)
+            _BLOCK_RULES.append((pat, risk, label, message, hotline, cat))
 
 
 _compile_rules()
 
+_BLOCKLIST_URLS: list[str] = [
+    "https://blocklistproject.github.io/Lists/alt-version/drugs-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/fraud-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/gambling-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/malware-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/phishing-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/piracy-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/porn-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/ransomware-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/redirect-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/scam-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/torrent-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/abuse-nl.txt",
+    "https://blocklistproject.github.io/Lists/alt-version/vaping-nl.txt",
+]
+
+_blocked_domains: set[str] = set()
+_blocklist_ready = threading.Event()
+
+
+def _fetch_single_list(url: str) -> set[str]:
+    domains: set[str] = set()
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Flight-Search/1.0"})
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="ignore").strip().lower()
+                if line and not line.startswith("#") and not line.startswith("!"):
+                    domains.add(line)
+    except Exception:
+        log.warning("Failed to fetch blocklist: %s", url)
+    return domains
+
+
+def _load_all_blocklists():
+    global _blocked_domains
+    merged: set[str] = set()
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_fetch_single_list, u): u for u in _BLOCKLIST_URLS}
+        for future in futures:
+            merged.update(future.result())
+    _blocked_domains = merged
+    _blocklist_ready.set()
+    log.info("Loaded %d blocked domains from %d blocklists", len(merged), len(_BLOCKLIST_URLS))
+
+
+threading.Thread(target=_load_all_blocklists, daemon=True, name="blocklist-loader").start()
+
+_UNSAFE_URL_TOKENS: re.Pattern = re.compile(
+    r"porn|xxx|nsfw|nude|naked|hentai|gore|snuff|fetish|escort|"
+    r"camgirl|webcam[-_ ]?girl|strip[-_ ]?club|"
+    r"darknet|dark[-_ ]?web|torrent|warez|crack[-_ ]?download|"
+    r"proxy[-_ ]?unblocker|unblock[-_ ]?site|bypass[-_ ]?filter",
+    re.IGNORECASE,
+)
+
+
+def _score_query(query: str) -> tuple[int, str, str, str, str]:
+    query_lower = query.lower()
+    top_risk = 0
+    top_label = ""
+    top_message = ""
+    top_hotline = ""
+    top_cat = ""
+    for pattern, risk, label, message, hotline, cat in _BLOCK_RULES:
+        if pattern.search(query_lower) and risk > top_risk:
+            top_risk = risk
+            top_label = label
+            top_message = message
+            top_hotline = hotline
+            top_cat = cat
+    if top_risk == 0:
+        return 0, "", "", "", ""
+    if top_cat not in _NEVER_REDUCE and _has_educational_context(query_lower):
+        top_risk = max(0, top_risk - _EDUCATIONAL_SCORE_REDUCTION)
+    return top_risk, top_label, top_message, top_hotline, top_cat
+
+
+def _extract_host(url: str) -> str:
+    if "://" not in url:
+        return ""
+    return url.split("://", 1)[1].split("/", 1)[0].split(":")[0].lower()
+
+
+def _is_domain_blocked(host: str) -> bool:
+    if not host:
+        return False
+    parts = host.split(".")
+    for i in range(len(parts) - 1):
+        if ".".join(parts[i:]) in _blocked_domains:
+            return True
+    return False
+
 
 @t.final
 class SXNGPlugin(Plugin):
-    """Blocks searches for inappropriate, dangerous, or illegal content."""
-
     id = "content_filter"
 
     def __init__(self, plg_cfg: "PluginCfg") -> None:
@@ -222,41 +400,50 @@ class SXNGPlugin(Plugin):
         self.info = PluginInfo(
             id=self.id,
             name="Content Filter",
-            description="Blocks searches for dangerous, illegal, or age-inappropriate content.",
+            description="Risk-scored filtering for dangerous, illegal, or age-inappropriate content.",
             preference_section="general",
         )
 
     def pre_search(self, request: "SXNG_Request", search: "SearchWithPlugins") -> bool:
-        query = search.search_query.query.strip().lower()
+        query = search.search_query.query.strip()
         if not query:
             return True
-
-        for pattern, message, hotline in _BLOCK_RULES:
-            if pattern.search(query):
-                # Stash the warning on the request so post_search can pick it up
-                request.blocked_message = message  # type: ignore[attr-defined]
-                request.blocked_hotline = hotline  # type: ignore[attr-defined]
-                flask.g.content_blocked = True
-                log.info("Content filter blocked query: %r", query)
-                return False  # stop the search
-
+        risk, label, message, hotline, cat = _score_query(query)
+        flask.g.risk_score = risk
+        flask.g.risk_label = label
+        if risk >= 80:
+            request.blocked_message = message
+            request.blocked_hotline = hotline
+            request.blocked_label = label
+            flask.g.content_blocked = True
+            log.info("Content filter blocked query (risk=%d, cat=%s): %r", risk, label, query)
+            return False
         return True
 
-    # noinspection PyMethodMayBeStatic
     def on_result(self, request: "SXNG_Request", search: "SearchWithPlugins", result: dict) -> bool:
-        """Check each individual result's title, URL, and snippet against the
-        block-list.  Return ``False`` to suppress the result."""
+        url = result.get("url", "") or ""
+        host = _extract_host(url)
+        if _is_domain_blocked(host):
+            log.info("Blocklist suppressed domain: %s", host)
+            return False
+        if _UNSAFE_URL_TOKENS.search(url.lower()):
+            log.info("URL token filter suppressed: %s", url[:120])
+            return False
+        risk = getattr(flask.g, "risk_score", 0)
+        if risk <= 0:
+            return True
         text_parts: list[str] = []
         for key in ("title", "url", "content", "parsed_url", "img_src", "thumbnail"):
-            field_value = result.get(key)
-            if field_value:
-                text_parts.append(str(field_value).lower())
+            val = result.get(key)
+            if val:
+                text_parts.append(str(val).lower())
         searchable = " ".join(text_parts)
         if not searchable:
             return True
-        for pattern, _message, _hotline in _BLOCK_RULES:
-            if pattern.search(searchable):
-                log.info("Content filter suppressed result: %s", result.get("url", "?"))
+        threshold = 0 if risk >= 60 else (risk if risk >= 30 else 80)
+        for pattern, rule_risk, _label, _msg, _hl, _cat in _BLOCK_RULES:
+            if rule_risk >= threshold and pattern.search(searchable):
+                log.info("Content filter suppressed result (risk=%d): %s", risk, result.get("url", "?"))
                 return False
         return True
 
@@ -264,10 +451,8 @@ class SXNGPlugin(Plugin):
         message = getattr(request, "blocked_message", None)
         if not message:
             return []
-
         hotline = getattr(request, "blocked_hotline", "")
-        full_text = message
+        parts = [message]
         if hotline:
-            full_text += " " + hotline
-
-        return [Answer(answer=full_text)]
+            parts.append(hotline)
+        return [Answer(answer=" ".join(parts))]

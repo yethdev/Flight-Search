@@ -18,6 +18,7 @@ whoogle-search-1.2.2/
 # Root files
 !.env.example
 !README.md
+!NOTICE
 !docker-compose.yml
 !LICENSE
 

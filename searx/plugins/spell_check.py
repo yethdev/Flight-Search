@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Spell-check plugin — detects likely typos via Google autocomplete and
-transparently corrects the search query, displaying a Google-style
+"""Spell-check plugin — detects likely typos via Brave autocomplete and
+transparently corrects the search query, showing a Google-style
 "Showing results for … / Search exactly for …" banner."""
 
 import logging
@@ -18,8 +18,8 @@ if t.TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
 def _levenshtein(a: str, b: str) -> int:
-    """Classic Levenshtein edit-distance."""
     if len(a) < len(b):
         return _levenshtein(b, a)
     if not b:
@@ -33,26 +33,54 @@ def _levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
-def _normalise(s: str) -> str:
-    """Lower-case and collapse whitespace."""
+def _norm(s: str) -> str:
     return " ".join(s.lower().split())
 
 
-def _looks_like_typo(original: str, suggestion: str) -> bool:
-    """Return True when *suggestion* seems like a spell-fixed version of
-    *original* (similar but not identical)."""
-    a, b = _normalise(original), _normalise(suggestion)
-    if a == b:
-        return False
-    # Only consider corrections where the words are close
-    dist = _levenshtein(a, b)
-    # Allow edits proportional to query length but cap at 3
-    max_dist = min(3, max(1, len(a) // 4))
-    return dist <= max_dist
+def _try_word_correction(original: str, suggestions: list[str]) -> str | None:
+    """Attempt word-level correction: only corrects when exactly one word
+    differs and multiple suggestions agree on the replacement."""
+    orig_words = _norm(original).split()
+    if not orig_words:
+        return None
+
+    votes: dict[int, dict[str, int]] = {}
+
+    for suggestion in suggestions:
+        sug_words = _norm(suggestion).split()
+        if len(sug_words) != len(orig_words):
+            continue
+        for i, (ow, sw) in enumerate(zip(orig_words, sug_words)):
+            if ow != sw:
+                if i not in votes:
+                    votes[i] = {}
+                votes[i][sw] = votes[i].get(sw, 0) + 1
+
+    if len(votes) != 1:
+        return None
+
+    pos, candidates = next(iter(votes.items()))
+    orig_word = orig_words[pos]
+    best_replacement = max(candidates, key=candidates.get)
+    vote_count = candidates[best_replacement]
+
+    if vote_count < 2:
+        return None
+
+    dist = _levenshtein(orig_word, best_replacement)
+    max_allowed = min(2, max(1, len(orig_word) // 4))
+    if dist > max_allowed:
+        return None
+
+    corrected_words = original.split()
+    if pos < len(corrected_words):
+        corrected_words[pos] = best_replacement
+    return " ".join(corrected_words)
+
 
 @t.final
 class SXNGPlugin(Plugin):
-    """Auto-corrects likely typos and shows a Google-style correction banner."""
+    """Auto-corrects likely typos and shows a correction banner."""
 
     id = "spell_check"
 
@@ -70,12 +98,9 @@ class SXNGPlugin(Plugin):
         if not query or len(query) < 3:
             return True
 
-        # Skip if the user explicitly asked for this exact query (via the
-        # "Search exactly" link which adds &spell=off)
         if flask.request.args.get("spell") == "off":
             return True
 
-        # Skip if content filter blocked this query
         if getattr(flask.g, "content_blocked", False):
             return True
 
@@ -88,11 +113,16 @@ class SXNGPlugin(Plugin):
         if not suggestions:
             return True
 
-        best = suggestions[0]
-        if _looks_like_typo(query, best):
+        norm_query = _norm(query)
+        for sug in suggestions:
+            if _norm(sug) == norm_query:
+                return True
+
+        correction = _try_word_correction(query, suggestions)
+        if correction and _norm(correction) != norm_query:
             flask.g.spell_original = query
-            flask.g.spell_corrected = best
-            search.search_query.query = best
-            log.info("Spell-check: %r → %r", query, best)
+            flask.g.spell_corrected = correction
+            search.search_query.query = correction
+            log.info("Spell-check: %r → %r", query, correction)
 
         return True

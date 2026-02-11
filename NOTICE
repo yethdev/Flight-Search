@@ -1,0 +1,23 @@
+Flight Search
+Copyright (c) 2025-2026 yeth.dev
+
+This project is a modified fork of SearXNG, licensed under the
+GNU Affero General Public License v3.0 (see LICENSE).
+
+## Additional Attribution Requirement
+
+If you use, modify, or deploy Flight Search (or any derivative of it),
+you must include visible credit to yeth.dev in at least one of the
+following locations:
+
+- The footer or about page of the running application
+- The README or documentation of any public repository containing
+  the source code or a derivative
+
+Acceptable credit formats:
+
+"Built on Flight Search by yeth.dev"
+"Based on Flight Search (yeth.dev)"
+
+This attribution requirement applies on top of, and does not replace,
+the obligations of the AGPL-3.0 license.
