@@ -1,0 +1,58 @@
+version: '3.7'
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: always
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng-config:/etc/searxng:rw
+      - ./searx-data:/var/log/searxng:rw
+      - ./searx/templates/simple:/usr/local/searxng/searx/templates/simple:ro
+      - ./searx/static/themes/simple:/usr/local/searxng/searx/static/themes/simple:ro
+      - ./searx/search/processors/online.py.patched:/usr/local/searxng/searx/search/processors/online.py:ro
+      - ./searx/engines/qwant.py.patched:/usr/local/searxng/searx/engines/qwant.py:ro
+      - ./searx/plugins/ai_overview.py:/usr/local/searxng/searx/plugins/ai_overview.py:ro
+      - ./searx/plugins/content_filter.py:/usr/local/searxng/searx/plugins/content_filter.py:ro
+      - ./searx/plugins/spell_check.py:/usr/local/searxng/searx/plugins/spell_check.py:ro
+      - ./searx/plugins/anti_abuse.py:/usr/local/searxng/searx/plugins/anti_abuse.py:ro
+      - ./searx/infopage/en/about.md:/usr/local/searxng/searx/infopage/en/about.md:ro
+    env_file:
+      - .env
+    environment:
+      - SEARXNG_BASE_URL=https://search.yeth.dev/
+      - SEARXNG_VALKEY_URL=valkey://valkey:6379/0
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONPYCACHEPREFIX=/tmp/pycache
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+    depends_on:
+      - valkey
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: searxng-valkey
+    restart: always
+    command: valkey-server --save 60 1 --loglevel warning
+    volumes:
+      - valkey-data:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+
+volumes:
+  valkey-data:

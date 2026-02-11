@@ -1,0 +1,16 @@
+<fieldset>{{- '' -}}
+  <legend id="pref_image_proxy">{{ _('Image Web Tool') }}</legend>{{- '' -}}
+  <p class="value">{{- '' -}}
+    <input type="checkbox" {{- ' ' -}}
+           name="image_proxy" {{- ' ' -}}
+           aria-labelledby="pref_image_proxy" {{- ' ' -}}
+           class="checkbox-onoff" {{- ' ' -}}
+           {%- if preferences.get_value('image_proxy') -%}
+             checked
+           {%- endif -%}{{- ' ' -}}
+           >{{- '' -}}
+  </p>{{- '' -}}
+  <div class="description">
+    {{- _('Web Tool image results through Search') -}}
+  </div>{{- '' -}}
+</fieldset>{{- '' -}}

@@ -1,0 +1,270 @@
+{% extends "simple/base.html" %}
+{% from 'simple/icons.html' import icon, icon_big, icon_small %}
+{% macro engine_data_form(engine_data) -%}
+    {% for engine_name, kv_data in engine_data.items() %}
+        {% for k, v in kv_data.items() %}
+            <input type="hidden" name="engine_data-{{ engine_name }}-{{ k|e }}" value="{{ v|e }}">
+        {% endfor %}
+    {% endfor %}
+{%- endmacro %}
+{% block title %}{% if query_in_title %}{{- q|e }} - {% endif %}{% endblock %}
+{% block meta %}<link rel="alternate" type="application/rss+xml" title="Searx search: {{ q|e }}" href="{{ url_for('search', _external=True) }}?q={{ q|urlencode }}&amp;categories={{ selected_categories|join(",") | replace(' ','+') }}&amp;pageno={{ pageno }}&amp;time_range={{ time_range }}&amp;language={{ current_language }}&amp;safesearch={{ safesearch }}&amp;format=rss">{% endblock %}
+{% block content %}
+{% include 'simple/search.html' %}
+
+{% if results and results|map(attribute='template')|unique|list|count == 1 %}
+  {% set only_template = 'only_template_' + results[0]['template']|default('default')|replace('.html', '') %}
+{% else %}
+  {% set only_template = '' %}
+{% endif %}
+
+<div id="results" class="{{ only_template }}">
+
+  {%- if answers -%}
+    {%- include 'simple/elements/answers.html' -%}
+  {%- endif %}
+
+    <div id="sidebar">
+
+        {%- if number_of_results != '0' -%}
+        <p id="result_count"><small>{{ _('Number of results') }}: {{ number_of_results }}</small></p>
+        {%- endif -%}
+
+        {%- if infoboxes -%}
+          <div id="infoboxes">
+            <details open class="sidebar-collapsible">
+              <summary class="title">{{ _('Info') }}</summary>
+              {%- for infobox in infoboxes -%}
+                {%- include 'simple/elements/infobox.html' -%}
+              {%- endfor -%}
+            </details>
+          </div>
+        {%- endif -%}
+
+        {%- if suggestions -%}
+          {%- include 'simple/elements/suggestions.html' -%}
+        {%- endif -%}
+
+        {%- include 'simple/elements/engines_msg.html' -%}
+
+        {%- if method == 'POST' -%}
+          {%- include 'simple/elements/search_url.html' -%}
+        {%- endif -%}
+
+        {%- if search_formats -%}
+          {%- include 'simple/elements/apis.html' -%}
+        {%- endif -%}
+
+        <div id="sidebar-end-collapsible"></div>
+    </div>
+
+    {%- if corrections -%}
+      {%- include 'simple/elements/corrections.html' -%}
+    {%- endif -%}
+
+    {%- if g and g.get('spell_corrected') -%}
+    <div id="spell-correction" style="margin:0 0 1em 0; padding:.6em 1em; font-size:.95em; color:var(--color-base-font,#666);">
+      Showing results for <a href="{{ url_for('search') }}?q={{ g.spell_corrected|urlencode }}" style="font-weight:600; font-style:italic; color:var(--color-base-font-color,inherit);">{{ g.spell_corrected }}</a><br>
+      <span style="font-size:.85em;">Search exactly for <a href="{{ url_for('search') }}?q={{ g.spell_original|urlencode }}&amp;spell=off" style="text-decoration:underline;">&ldquo;{{ g.spell_original }}&rdquo;</a></span>
+    </div>
+    {%- endif -%}
+
+    <!-- AI Overview -->
+    <div id="ai-overview" style="display:none;">
+      <style>
+        #ai-overview {
+          margin: 0 0 1em 0; padding: 1em 1.2em; border-radius: 10px; position: relative;
+          border: 1px solid var(--color-result-border, var(--color-sidebar-border, #ddd));
+          background: var(--color-result-background, var(--color-sidebar-background, #fff));
+          color: var(--color-base-font, #444);
+        }
+        #ai-overview-header { display:flex; align-items:center; gap:.5em; margin-bottom:.6em; }
+        #ai-overview-header .ai-icon { font-size:1.15em; }
+        #ai-overview-header .ai-label { font-weight:600; font-size:.95em; color: var(--color-base-font, #444); }
+        #ai-toggle { margin-left:auto; background:none; border:none; cursor:pointer; font-size:.8em; color: var(--color-result-publishdate-font, var(--color-result-engines-font, #888)); padding:2px 6px; border-radius:4px; }
+        #ai-toggle:hover { background: var(--color-result-border, var(--color-sidebar-border, #ddd)); }
+        #ai-overview-body { line-height:1.6; font-size:.92em; color: var(--color-base-font, #444); }
+        #ai-overview-body p { margin:0 0 .5em 0; }
+        #ai-overview-body a { color: var(--color-result-link-font, var(--color-url-font, #334999)); text-decoration:underline; }
+        #ai-overview-body ul, #ai-overview-body ol { margin:.3em 0 .5em 1.4em; padding:0; }
+        #ai-overview-body li { margin-bottom:.2em; }
+        #ai-overview-body strong { font-weight:600; }
+        #ai-footer { margin-top:.6em; font-size:.75em; color: var(--color-result-publishdate-font, var(--color-result-engines-font, #888)); }
+        @keyframes ai-shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+        .ai-shimmer-line { height:.9em; margin-bottom:.55em; border-radius:4px; background:linear-gradient(90deg, var(--color-result-border, #ddd) 25%, var(--color-result-background, #f0f0f0) 50%, var(--color-result-border, #ddd) 75%); background-size:200% 100%; animation:ai-shimmer 1.5s infinite; }
+        .ai-shimmer-line:nth-child(1){width:92%} .ai-shimmer-line:nth-child(2){width:80%} .ai-shimmer-line:nth-child(3){width:65%}
+        #ai-error { color: var(--color-error, #db3434); }
+      </style>
+      <div id="ai-overview-header">
+        <span class="ai-icon">✦</span>
+        <span class="ai-label">AI Overview</span>
+        <button id="ai-toggle" type="button" title="Hide AI Overview">▲</button>
+      </div>
+      <div id="ai-overview-body">
+        <div id="ai-loading">
+          <div class="ai-shimmer-line"></div>
+          <div class="ai-shimmer-line"></div>
+          <div class="ai-shimmer-line"></div>
+        </div>
+        <div id="ai-text"></div>
+        <div id="ai-error" style="display:none;"></div>
+      </div>
+      <div id="ai-footer">Powered by GPT&#8209;5&#8209;nano with web search</div>
+    </div>
+    <script>
+    (function(){
+      var q = "{{ q|e }}";
+      if (!q) return;
+      {% if g and g.get('content_blocked') %}return;{% endif %}
+      var box = document.getElementById("ai-overview");
+      box.style.display = "";
+      var collapsed = false;
+      document.getElementById("ai-toggle").onclick = function(){
+        collapsed = !collapsed;
+        document.getElementById("ai-overview-body").style.display = collapsed ? "none" : "";
+        document.getElementById("ai-footer").style.display = collapsed ? "none" : "";
+        this.textContent = collapsed ? "▼" : "▲";
+        this.title = collapsed ? "Show AI Overview" : "Hide AI Overview";
+      };
+
+      var markdown = "";
+      var textEl = document.getElementById("ai-text");
+      var loadEl = document.getElementById("ai-loading");
+      var errEl  = document.getElementById("ai-error");
+      var awaitingFirst  = true;
+
+      var aiStream = new EventSource("/api/ai-overview?q=" + encodeURIComponent(q));
+
+      aiStream.onmessage = function(e) {
+        try {
+          var chunk = JSON.parse(e.data);
+          if (chunk.t) {
+            if (awaitingFirst) { loadEl.style.display = "none"; awaitingFirst = false; }
+            markdown += chunk.t;
+            textEl.innerHTML = fmtMd(markdown);
+          }
+        } catch(_){}
+      };
+
+      aiStream.addEventListener("done", function() {
+        aiStream.close();
+        if (awaitingFirst) loadEl.style.display = "none";
+      });
+
+      aiStream.addEventListener("error", function(e) {
+        aiStream.close();
+        loadEl.style.display = "none";
+        if (awaitingFirst) {
+          errEl.textContent = "Could not generate AI overview.";
+          errEl.style.display = "";
+        }
+      });
+
+      function fmtMd(t){
+        t = t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        // headings
+        t = t.replace(/^### (.+)$/gm,"<strong>$1</strong>");
+        t = t.replace(/^## (.+)$/gm,"<strong>$1</strong>");
+        // bold / italic
+        t = t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");
+        t = t.replace(/\*(.+?)\*/g,"<em>$1</em>");
+        // links
+        t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
+        // unordered lists
+        t = t.replace(/(?:^|\n)((?:[-*] .+\n?)+)/g, function(m, list){
+          var items = list.trim().split(/\n/).map(function(l){ return "<li>"+l.replace(/^[-*] /,"")+"</li>"; }).join("");
+          return "<ul>"+items+"</ul>";
+        });
+        // paragraphs
+        t = t.replace(/\n{2,}/g,"</p><p>");
+        t = t.replace(/\n/g,"<br>");
+        return "<p>"+t+"</p>";
+      }
+    })();
+    </script>
+
+    <div id="urls" role="main">
+    {% for result in results %}
+        {% if result.open_group and not only_template %}<div class="template_group_{{ result['template']|replace('.html', '') }}">{% endif %}
+        {% set index = loop.index %}
+        {% include get_result_template('simple', result['template']) %}
+        {% if result.close_group and not only_template %}</div>{% endif %}
+    {% endfor %}
+    {% if not results and not answers %}
+        {% include 'simple/messages/no_results.html' %}
+    {% endif %}
+    </div>
+    <div id="backToTop">
+      <a href="#" aria-label="{{ _('Back to top') }}">{{ icon_small('navigate-up') }}</a>
+    </div>
+    {% if paging %}
+    <nav id="pagination" role="navigation">
+        {% if pageno > 1 %}
+            <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" class="previous_page">
+                <div class="{% if rtl %}right{% else %}left{% endif %}">
+                  <input type="hidden" name="q" value="{{ q|e }}" >
+                  {% for category in selected_categories %}
+                  <input type="hidden" name="category_{{ category }}" value="1" >
+                  {% endfor %}
+                  <input type="hidden" name="pageno" value="{{ pageno-1 }}" >
+                  <input type="hidden" name="language" value="{{ current_language }}" >
+                  <input type="hidden" name="time_range" value="{{ time_range }}" >
+                  <input type="hidden" name="safesearch" value="{{ safesearch }}" >
+                  <input type="hidden" name="theme" value="{{ theme }}" >
+                  {% if timeout_limit %}<input type="hidden" name="timeout_limit" value="{{ timeout_limit|e }}" >{% endif %}
+                  {{- engine_data_form(engine_data) -}}
+                  <button role="link" type="submit">{{ icon_small('navigate-left') }} {{ _('Previous page') }}</button>
+                </div>
+            </form>
+        {% endif %}
+        {%- if results | count > 0 -%}
+          <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" class="next_page">
+              <div class="{% if rtl %}left{% else %}right{% endif %}">
+                <input type="hidden" name="q" value="{{ q|e }}" >
+                {% for category in selected_categories %}
+                <input type="hidden" name="category_{{ category }}" value="1" >
+                {% endfor %}
+                <input type="hidden" name="pageno" value="{{ pageno+1 }}" >
+                <input type="hidden" name="language" value="{{ current_language }}" >
+                <input type="hidden" name="time_range" value="{{ time_range }}" >
+                <input type="hidden" name="safesearch" value="{{ safesearch }}" >
+                <input type="hidden" name="theme" value="{{ theme }}" >
+                {% if timeout_limit %}<input type="hidden" name="timeout_limit" value="{{ timeout_limit|e }}" >{% endif %}
+                {{- engine_data_form(engine_data) -}}
+                <button role="link"  type="submit">{{ _('Next page') }} {{ icon_small('navigate-right') }}</button>
+              </div>
+          </form>
+        {%- endif -%}
+        {% set pstart = 1 %}
+        {% set pend = 11 %}
+        {% if pageno > 5 %}
+            {% set pstart = pageno - 4 %}
+            {% set pend = pageno + 6 %}
+        {% endif %}
+
+        <div class="numbered_pagination">
+        {% for x in range(pstart, pend) %}
+            <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" class="page_number">
+                <input type="hidden" name="q" value="{{ q|e }}" >
+                {% for category in selected_categories %}
+                <input type="hidden" name="category_{{ category }}" value="1" >
+                {% endfor %}
+                <input type="hidden" name="pageno" value="{{ x }}" >
+                <input type="hidden" name="language" value="{{ current_language }}" >
+                <input type="hidden" name="time_range" value="{{ time_range }}" >
+                <input type="hidden" name="safesearch" value="{{ safesearch }}" >
+                <input type="hidden" name="theme" value="{{ theme }}" >
+                {% if timeout_limit %}<input type="hidden" name="timeout_limit" value="{{ timeout_limit|e }}" >{% endif %}
+                {{- engine_data_form(engine_data) -}}
+                {% if pageno == x %}
+                <input role="link" class="page_number_current" type="button" value="{{ x }}">
+                {% else %}
+                <input role="link" class="page_number" type="submit" value="{{ x }}">
+                {% endif %}
+            </form>
+        {% endfor %}
+        </div>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}

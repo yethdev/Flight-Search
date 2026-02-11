@@ -1,0 +1,44 @@
+# Ignore everything — this repo only tracks the Flight Search overlay,
+# not the full SearXNG source tree (which lives in the Docker image).
+*
+
+# Allow traversal into subdirectories
+!*/
+
+# Block directories we never want tracked
+client/
+docs/
+whoogle-search-1.2.2/
+
+# Stray .gitignore files from stock SearXNG
+**/.gitignore
+# ... except our own
+!/.gitignore
+
+# Root files
+!.env.example
+!README.md
+!docker-compose.yml
+!LICENSE
+
+# Config
+!searxng-config/settings.yml
+
+# Custom plugins (mounted individually into the container)
+!searx/plugins/ai_overview.py
+!searx/plugins/content_filter.py
+!searx/plugins/spell_check.py
+!searx/plugins/anti_abuse.py
+
+# Template overlay (entire simple/ dir is bind-mounted over the container's)
+!searx/templates/simple/**
+
+# Static theme overlay (same bind-mount approach)
+!searx/static/themes/simple/**
+
+# Patched upstream files
+!searx/engines/qwant.py.patched
+!searx/search/processors/online.py.patched
+
+# Custom about page
+!searx/infopage/en/about.md
