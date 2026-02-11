@@ -66,17 +66,14 @@
   </main>
   <footer style="min-height:auto;padding:6px 0;overflow:visible">
     <p style="margin:0;padding:0;font-size:.8em;opacity:.65;line-height:1.4">
-      By using this service you agree to our <a href="{{ url_for('info', pagename='about') }}">Terms&nbsp;of&nbsp;Service</a>.
-      Flight Search is not affiliated with, endorsed by, or sponsored by any third-party search engine.
-      <br>
       <a href="{{ url_for('info', pagename='about') }}">About&nbsp;&amp;&nbsp;Legal</a>
       | <a href="https://github.com/yethdev/Flight-Search" target="_blank" rel="noopener">GitHub</a>
       {% if enable_metrics %}| <a href="{{ url_for('stats') }}">{{ _('Engine stats') }}</a>{% endif %}
     </p>
   </footer>
-  <div id="tos-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a1a2e;color:#e0e0e0;padding:14px 20px;font-size:.9em;z-index:9999;box-shadow:0 -2px 8px rgba(0,0,0,.4);text-align:center">
+  <div id="tos-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:var(--color-base-background);color:var(--color-base-font);padding:14px 20px;font-size:.9em;z-index:9999;box-shadow:0 -2px 8px rgba(0,0,0,.25);text-align:center;border-top:1px solid var(--color-header-border, #ddd)">
     By using Flight Search you agree to our
-    <a href="{{ url_for('info', pagename='about') }}" style="color:#7eb8ff;text-decoration:underline">Terms of Service and Privacy Policy</a>.
+    <a href="{{ url_for('info', pagename='about') }}" style="color:var(--color-url-font);text-decoration:underline">Terms of Service and Privacy Policy</a>.
     Flight Search is not affiliated with, endorsed by, or sponsored by any third-party search engine or provider.
     No personal data is collected. SafeSearch is always on but no filter is perfect&nbsp;&mdash; parental supervision is recommended.
     <button id="tos-accept" style="margin-left:16px;padding:6px 18px;background:#4CAF50;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.9em">I Agree</button>
@@ -84,10 +81,23 @@
   <script>
   (function(){
     var k='fs_tos_accepted';
+    function lockSearch(){
+      document.querySelectorAll('form[action]').forEach(function(f){
+        if(f.querySelector('input[name="q"]')){
+          f.addEventListener('submit',function(e){ if(!localStorage.getItem(k)){e.preventDefault();document.getElementById('tos-banner').style.display='block';} });
+        }
+      });
+      var q=document.getElementById('q');
+      if(q&&!localStorage.getItem(k)){q.setAttribute('placeholder','Accept the Terms of Service to search');}
+    }
     if(!localStorage.getItem(k)){document.getElementById('tos-banner').style.display='block';}
     document.getElementById('tos-accept').addEventListener('click',function(){
-      localStorage.setItem(k,'1');document.getElementById('tos-banner').style.display='none';
+      localStorage.setItem(k,'1');
+      document.getElementById('tos-banner').style.display='none';
+      var q=document.getElementById('q');
+      if(q){q.setAttribute('placeholder','');q.focus();}
     });
+    if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',lockSearch);}else{lockSearch();}
   })();
   </script>
 </body>
