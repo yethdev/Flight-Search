@@ -113,6 +113,7 @@ class SXNGPlugin(Plugin):
                         "localhost", "127.0.0.1",
                         "search.yeth.dev",
                         "search.yeth.uk", "search.software-resources.org",
+                        "flightsearch.kids",
                     )
                 ):
                     log.info("Blocked external API access from %s (format=%s)", ip, fmt)

@@ -89,9 +89,6 @@
         #ai-overview-body ul, #ai-overview-body ol { margin:.3em 0 .5em 1.4em; padding:0; }
         #ai-overview-body li { margin-bottom:.2em; }
         #ai-overview-body strong { font-weight:600; }
-        #ai-overview-body .ai-cite { font-size:.75em; vertical-align:super; line-height:0; margin:0 1px; }
-        #ai-overview-body .ai-cite a { color:var(--color-search-font,#1a73e8); text-decoration:none; }
-        #ai-overview-body .ai-cite a:hover { text-decoration:underline; }
         #ai-footer { margin-top:.6em; font-size:.75em; color: var(--color-result-publishdate-font, var(--color-result-engines-font, #888)); }
         @keyframes ai-shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
         .ai-shimmer-line { height:.9em; margin-bottom:.55em; border-radius:4px; background:linear-gradient(90deg, var(--color-result-border, #ddd) 25%, var(--color-result-background, #f0f0f0) 50%, var(--color-result-border, #ddd) 75%); background-size:200% 100%; animation:ai-shimmer 1.5s infinite; }
@@ -112,7 +109,7 @@
         <div id="ai-text"></div>
         <div id="ai-error" style="display:none;"></div>
       </div>
-      <div id="ai-footer">Flight AI</div>
+      <div id="ai-footer">Flight AI &mdash; AI can be inaccurate, always verify what it tells you.</div>
     </div>
     <script>
     (function(){
@@ -135,30 +132,12 @@
       var loadEl = document.getElementById("ai-loading");
       var errEl  = document.getElementById("ai-error");
       var awaitingFirst = true;
-      var sourceResults = [];
-
-      function collectResults() {
-        var items = [];
-        document.querySelectorAll("#urls .result").forEach(function(el) {
-          var titleEl = el.querySelector("h3");
-          var linkEl = el.querySelector("a.url_header") || el.querySelector("h3 a") || el.querySelector("a");
-          var snippetEl = el.querySelector(".content");
-          items.push({
-            title: titleEl ? titleEl.textContent.trim() : "",
-            url: linkEl ? linkEl.href : "",
-            snippet: snippetEl ? snippetEl.textContent.trim().slice(0, 300) : ""
-          });
-        });
-        return items.slice(0, 6);
-      }
 
       function startStream() {
-        var results = collectResults();
-        sourceResults = results;
         fetch("/api/ai-overview", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({q: q, results: results})
+          body: JSON.stringify({q: q})
         }).then(function(resp) {
           if (!resp.ok) {
             loadEl.style.display = "none";
@@ -217,13 +196,6 @@
         t = t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");
         t = t.replace(/\*(.+?)\*/g,"<em>$1</em>");
         t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
-        t = t.replace(/(\[\d+\]){2,}\s*$/g, "");
-        t = t.replace(/\[(\d+)\]/g, function(m, num){
-          var idx = parseInt(num, 10) - 1;
-          var url = (sourceResults[idx] && sourceResults[idx].url) || "";
-          if (url) return '<span class="ai-cite"><a href="'+url+'" rel="noopener noreferrer" target="_blank">['+num+']</a></span>';
-          return '<span class="ai-cite">['+num+']</span>';
-        });
         t = t.replace(/(?:^|\n)((?:[-*] .+\n?)+)/g, function(m, list){
           var items = list.trim().split(/\n/).map(function(l){ return "<li>"+l.replace(/^[-*] /,"")+"</li>"; }).join("");
           return "<ul>"+items+"</ul>";
